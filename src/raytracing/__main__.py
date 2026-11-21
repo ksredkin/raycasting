@@ -2,8 +2,8 @@ import math
 import pygame
 
 MAP = [
-    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-    [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+    [0, 0, 1, 1, 1, 1, 1, 1, 1, 1],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
     [1, 0, 1, 1, 1, 0, 1, 1, 1, 1],
     [1, 0, 1, 0, 0, 0, 0, 0, 0, 1],
     [1, 0, 1, 0, 1, 1, 1, 0, 0, 1],
@@ -13,6 +13,12 @@ MAP = [
     [1, 0, 0, 0, 0, 0, 0, 0, 0, 1],
     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
 ]
+
+GROUND_COLOR = (139, 69, 19)
+SKY_COLOR = (70, 130, 180)
+
+FPS = 60
+PLAYER_SPEED = 1
 
 class Player:
     def __init__(self, x: int, y: int, fov: int = 60, angle: float = 0.0, speed: float = 0.01) -> None:
@@ -62,37 +68,6 @@ class Player:
         future_y = self.y + (math.cos(self._angle) * self.speed)
                 
         self._check_and_move(future_x, future_y)
-    
-
-class Ray:
-    RAY_STEP = 0.1
-
-    def __init__(self, x: int, y: int, angle: float) -> None:
-        self.x = x
-        self.y = y
-        self.angle = angle
-        self.walled = False
-        self.mimo = False
-        self.steps = 0
-
-    def move_forward(self) -> None:
-        self.steps += 1
-        
-        self.x += math.cos(self.angle) * self.RAY_STEP
-        self.y += math.sin(self.angle) * self.RAY_STEP
-        
-        map_x = int(self.x)
-        map_y = int(self.y)
-
-        if ((self.x <= 0) or (self.x >= len(MAP[0])) or (self.y <= 0) or (self.y >= len(MAP))):
-            self.mimo = True
-        elif (MAP[map_y][map_x] == 1):
-            self.walled = True
-
-COLOR_SHADE = 0.97
-
-GROUND_COLOR = (139, 69, 19)
-SKY_COLOR = (70, 130, 180)
 
 class Controller:
     def __init__(self, player: Player) -> None:
@@ -108,9 +83,9 @@ class Controller:
         if keys[pygame.K_d]:
             self.player.move_right()
         if keys[pygame.K_LEFT]:
-            self.player.angle(-1)
+            self.player.angle(-FPS/60)
         if keys[pygame.K_RIGHT]:
-            self.player.angle(1)
+            self.player.angle(FPS/60)
 
 def main():
     pygame.init()
@@ -119,8 +94,7 @@ def main():
 
     is_fullscreen = False
 
-    player = Player(1, 1, 90)
-
+    player = Player(1, 1, 90, speed=1/FPS)
     controller = Controller(player)
 
     screen = pygame.display.set_mode(window_size, pygame.RESIZABLE)
@@ -146,25 +120,57 @@ def main():
         controller.check(keys)
 
         screen_width, screen_height = screen.get_size()
-        pygame.draw.rect(screen, SKY_COLOR, (0, 0, screen_width, screen_height), width=0)
-        pygame.draw.rect(screen, GROUND_COLOR, (0, screen_height/2, screen_width, screen_height), width=0)
+        pygame.draw.rect(screen, SKY_COLOR, (0, 0, screen_width, screen_height/2), width=0)
+        pygame.draw.rect(screen, GROUND_COLOR, (0, screen_height/2, screen_width, screen_height/2), width=0)
 
-        half_fov = int(player.fov / 2)
-        ray_count = half_fov * 2
+        ray_count = screen_width
         
-        for column, offset in enumerate(range(-half_fov, half_fov)):
+        for column in range(ray_count):
+            camera_x = 2 * column / ray_count - 1
+            offset = math.degrees(math.atan(camera_x * math.tan(math.radians(player.fov / 2))))
             fov_angle = player._angle + math.radians(offset)
-            ray = Ray(x=player.x, y=player.y, angle=fov_angle)
 
-            while (not ray.walled) and (not ray.mimo):
-                ray.move_forward()
+            dir_x = math.cos(fov_angle)
+            dir_y = math.sin(fov_angle)
+
+            map_x = int(player.x)
+            map_y = int(player.y)
+
+            delta_dist_x = abs(1/dir_x) if dir_x != 0 else float("inf")
+            delta_dist_y = abs(1/dir_y) if dir_y != 0 else float("inf")
             
-            if not ray.mimo:
+            step_x = 1 if dir_x > 0 else -1
+            side_dist_x = ((map_x + 1 - player.x) * delta_dist_x) if dir_x > 0 else ((player.x - map_x) * delta_dist_x)
+            
+            step_y = 1 if dir_y > 0 else -1
+            side_dist_y = ((map_y + 1 - player.y) * delta_dist_y) if dir_y > 0 else ((player.y - map_y) * delta_dist_y)
+
+            side = 0
+            hit = False
+
+            for _ in range(100):
+                if side_dist_x < side_dist_y:
+                    side_dist_x += delta_dist_x
+                    map_x += step_x
+                    side = 0
+                else:
+                    side_dist_y += delta_dist_y
+                    map_y += step_y
+                    side = 1
+
+                if not (0 <= map_y < len(MAP) and 0 <= map_x < len(MAP[0])):
+                    break
+         
+                if MAP[map_y][map_x] == 1:
+                    hit = True
+                    break
+
+            if hit:
                 focal_length = screen_width / (
                     2 * math.tan(math.radians(player.fov / 2))
                 )
 
-                ray_distance = ray.steps * ray.RAY_STEP
+                ray_distance = ((side_dist_y - delta_dist_y) * 1) if side else ((side_dist_x - delta_dist_x) * 1)
 
                 corrected_distance = ray_distance * math.cos(
                     math.radians(offset)
@@ -172,10 +178,8 @@ def main():
 
                 rect_height = focal_length / max(corrected_distance, 0.001)
 
-                rect_color = [255, 255, 0]
-                for _ in range(ray.steps-1):
-                    for col in range(len(rect_color)):
-                        rect_color[col] = rect_color[col]*COLOR_SHADE
+                shade = (1 / (1 + ray_distance ** 2 * 0.02))
+                rect_color = [int(i * shade) for i in [255, 255, 0]]
 
                 rect_top = (screen_height - rect_height)/2
 
@@ -185,7 +189,7 @@ def main():
                 pygame.draw.rect(screen, rect_color, (rect_start, rect_top, rect_end-rect_start, rect_height), width=0)
 
         pygame.display.flip()
-        clock.tick(60)
+        clock.tick(FPS)
 
     pygame.quit()
 
